@@ -63,7 +63,40 @@ def train(sess,env,network,high,low):
             if RENDER_ENV:
                 env.render()
             if random.random() <= epsilon:
+                #print("exploring")
+                aIndex = env.action_space.sample()
+            else:
+                q = network.predict(np.reshape(s,(1,network.sDim)))[0]
+                #print (q)
+                maxQ = max(maxQ,np.max(q))
+                aIndex = np.argmax(q)
 
+            a = np.zeros([network.aDim])
+            a[aIndex] = 1
+
+            if epsilon > FINAL_EPSILON and t > OBSERVE_TIME:
+                epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+
+            s2,r,d,info = env.step(aIndex)
+            reward += r
+            if d:
+                #r = -1
+                summary = sess.run(tf.summary.merge_all(),feed_dict={rewardSummary:reward, maxQSummary:maxQ})
+                writer.add_summary(summary, i)
+                writer.flush()
+            Buff.add(s,a,r,d,s2)
+            if t > OBSERVE_TIME and Buff.size>BATCH_SIZE:
+                s_batch, a_batch, r_batch, d_batch, s2_batch = Buff.sample(BATCH_SIZE)
+                target_q = network.targetPredict(s2_batch)
+                #print(target_q)
+                y_batch = []
+                for k in xrange(BATCH_SIZE):
+                    if d_batch[k]:
+                        y_batch.append(r_batch[k])
+                    else:
+                        y_batch.append(r_batch[k]+GAMMA*np.max(target_q[k]))
+                network.train(np.reshape(s_batch,(BATCH_SIZE,network.sDim)),np.reshape(a_batch,(BATCH_SIZE,network.aDim)),np.reshape(y_batch,(BATCH_SIZE,1)))
+                network.targetUpdate()
             s = s2
             t += 1
             if t % SAVE_PER_STEP == 0:

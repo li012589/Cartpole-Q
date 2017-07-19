@@ -1,113 +1,110 @@
 import tensorflow as tf
-import gym
 import numpy as np
-from Qlearn import *
-from gym import wrappers
-from presentNN import genPic,save2Pic
-import math
+from collections import deque
+import random
+import tflearn
+import gym
 
-RENDER_ENV = False
-ENV_NAME = 'CartPole-v0'
-SAVE_PATH = './cartpole_q'
-maxBuffSize = 10000
-BATCH_SIZE = 64
-SAVE_PER_STEP = 1000
+def weight_variable(shape):
+    initial = tf.truncated_normal(shape, stddev = 0.01)
+    return tf.Variable(initial)
 
-OBSERVE = False
-NN_PRESENT = True
-OBSERVE_TIME = 0
-FINAL_EPSILON = 0.0001 # final value of epsilon
-INITIAL_EPSILON = 0.001 # starting value of epsilon
-EXPLORE = 200000000
-SUMMARY_DIR = './summary'
-# Max training steps
-MAX_EPISODES = 2000
-# Max episode length
-MAX_EP_STEPS = 1000
-LEARNING_RATE = 0.001
-# Discount factor
-GAMMA = 0.99
-# Soft target update param
-TAU = 0.001
-STEP = [0.1,0.1]
-MAX_RANGE = 10
-BASE_DIR_PIC = './picDir/'
+def bias_variable(shape):
+    initial = tf.constant(0.01, shape = shape)
+    return tf.Variable(initial)
 
-def train(sess,env,network,high,low):
-    rewardSummary = tf.Variable(0.0)
-    maxQSummary = tf.Variable(0.0)
-    tf.summary.scalar("Reward", rewardSummary)
-    tf.summary.scalar("Maxium Q", maxQSummary)
-    writer = tf.summary.FileWriter(SUMMARY_DIR, sess.graph)
+class replayBuff:
+    def __init__(self,maxSize):
+        self.buffer = deque()
+        self.size = 0
+        self.maxSize = maxSize
+    def add(self,s,a,r,t,s2):
+        if self.size <= self.maxSize:
+            self.buffer.append((s,a,r,t,s2))
+            self.size += 1
+        else:
+            self.buffer.popleft()
+            self.buffer.append((s,a,r,t,s2))
+    def sample(self,batchSize):
+        batch = []
+        if self.size < batchSize:
+            batch = random.sample(self.buffer, self.size)
+        else:
+            batch = random.sample(self.buffer,batchSize)
+        sBatch = np.array([_[0] for _ in batch])
+        aBatch = np.array([_[1] for _ in batch])
+        rBatch = np.array([_[2] for _ in batch])
+        tBatch = np.array([_[3] for _ in batch])
+        s2Batch = np.array([_[4] for _ in batch])
+        return sBatch, aBatch, rBatch, tBatch, s2Batch
+    def clear(self):
+        self.buffer.clear()
+        self.size = 0
 
-    sess.run(tf.global_variables_initializer())
-    network.initTarget()
-    Buff = replayBuff(maxBuffSize)
-    saver = tf.train.Saver()
-    checkpoint = tf.train.get_checkpoint_state("savedQnetwork")
-    epsilon = INITIAL_EPSILON
-    t = 0
-    if checkpoint and checkpoint.model_checkpoint_path:
-        saver.restore(sess, checkpoint.model_checkpoint_path)
-        print("Successfully loaded:", checkpoint.model_checkpoint_path)
-    else:
-        print("Could not find old network weights")
-    for i in xrange(MAX_EPISODES):
-    #i = 0
-    #while True:
-        s = env.reset()
-        reward = 0
-        maxQ = 0
-        #i += 1
-        for j in xrange(MAX_EP_STEPS):
-            if RENDER_ENV:
-                env.render()
-            if random.random() <= epsilon:
+class Qnetwork:
+    def __init__(self,sess,sDim,aDim,learningRate,tau):
+        self.sess = sess
+        self.sDim = sDim
+        self.aDim = aDim
+        self.learningRate = learningRate
+        self.tau = tau
 
-            s = s2
-            t += 1
-            if t % SAVE_PER_STEP == 0:
-                if NN_PRESENT:
-                    ranges = []
-                    for i in range(len(high)):
-                        if high[i] >= MAX_RANGE:
-                            high[i] = MAX_RANGE
-                            low[i] = -MAX_RANGE
-                        ranges.append([low[i],high[i]])
-                    genPic(network,ranges,STEP,[1,3],MAX_RANGE,BASE_DIR_PIC,t,theta = 0)
-                    genPic(network,ranges,STEP,[1,3],MAX_RANGE,BASE_DIR_PIC,t,theta = 10*2*math.pi/360)
-                saver.save(sess, 'savedQnetwork/' + ENV_NAME + '-dqn', global_step = t)
-            # print info
-            state = ""
-            if t <= OBSERVE_TIME:
-                state = "observe"
-            elif t > OBSERVE_TIME and t <= OBSERVE_TIME + EXPLORE:
-                state = "explore"
-            else:
-                state = "train"
-            print("TIMESTEP", t, "/ STATE", state, "/ EPSILON", epsilon, "/ ACTION", a, "/ REWARD", r, "/ Q_MAX %e" % np.max(q))
-            #print(aIndex)
-            #print(a)
-            if d:
-                print("break")
-                break
-        #print("run out of steps")
-    print ("run out of episodes")
-    env.close()
-    print(t)
-    #if NN_PRESENT:
-        #save2Pic(BASE_DIR_PIC,t,SAVE_PER_STEP)
+        self.inputs,self.out = self.createNetwork()
+        self.trainableVar = tf.trainable_variables()
 
-def main():
-    env = gym.make(ENV_NAME)
-    env = wrappers.Monitor(env, SAVE_PATH)
-    sess = tf.InteractiveSession()
-    sDim = env.observation_space.shape[0]
-    aDim = env.action_space.n
-    high = env.observation_space.high
-    low = env.observation_space.low
-    network = Qnetwork(sess,sDim,aDim,LEARNING_RATE,TAU)
-    train(sess,env,network,high,low)
+        self.targetInputs,self.targetOut = self.createNetwork()
+        self.targetTrainableVar = tf.trainable_variables()[len(self.trainableVar):]
+
+        self.updateTargetNetwork = [self.targetTrainableVar[i].assign(tf.multiply(self.trainableVar[i], self.tau)+tf.multiply(self.targetTrainableVar[i],1-self.tau)) for i in range(len(self.targetTrainableVar))]
+        self.initTargetNetwork = [self.targetTrainableVar[i].assign(self.trainableVar[i]) for i in range(len(self.targetTrainableVar))]
+
+        self.a = tf.placeholder(tf.float32, [None, self.aDim])
+        self.y = tf.placeholder(tf.float32,[None,1])
+
+        self.predictionValue = tf.reduce_sum(tf.multiply(self.out, self.a), reduction_indices=1)
+        self.tmp = tf.transpose(self.y) - self.predictionValue
+        #print(tuple(self.tmp.get_shape().as_list()))
+        self.tmp2 = tf.square(self.tmp)
+        self.loss = tf.reduce_mean(self.tmp2)
+
+        self.optimize = tf.train.AdamOptimizer(self.learningRate).minimize(self.loss)
+        #self.sess.run(tf.global_variables_initializer())
+    def createNetwork(self):
+        W_fc1 = weight_variable([self.sDim,50])
+        b_fc1 = bias_variable([50])
+        W_fc2 = weight_variable([50, 40])
+        b_fc2 = bias_variable([40])
+        W_fc3 = weight_variable([40, self.aDim])
+        b_fc3 = bias_variable([self.aDim])
+        inputs = tf.placeholder(tf.float32, [None,self.sDim])
+        h_fc1 = tf.nn.relu(tf.matmul(inputs, W_fc1) + b_fc1)
+        h_fc2 = tf.nn.relu(tf.matmul(h_fc1, W_fc2) + b_fc2)
+        #h_fc3 = tf.nn.relu(tf.matmul(h_fc2, W_fc3) + b_fc3)
+        out = tf.matmul(h_fc2,W_fc3) + b_fc3 #see ddpg for details in init w between -0.003--0.003
+        return inputs,out
+    def train(self,inputs,actions,y):
+        return self.sess.run(self.optimize,feed_dict={self.inputs:inputs,self.a:actions,self.y:y})
+    def predict(self,inputs):
+        return self.sess.run(self.out,feed_dict={self.inputs:inputs})
+    def targetPredict(self,inputs):
+        return self.sess.run(self.targetOut,feed_dict={self.targetInputs:inputs})
+    def targetUpdate(self):
+        return self.sess.run(self.updateTargetNetwork)
+    def initTarget(self):
+        return self.sess.run(self.initTargetNetwork)
 
 if __name__ == "__main__":
-    main()
+   pass
+   ENV_NAME = 'CartPole-v0'
+   Buff = replayBuff(10000)
+   env = gym.make(ENV_NAME)
+   s = env.reset()
+   sess = tf.InteractiveSession()
+   network = Qnetwork(sess,4,2,0.01,0.5)
+   network.initTarget()
+
+   print(sess.run(network.trainableVar))
+   print(sess.run(network.targetTrainableVar))
+
+
+
