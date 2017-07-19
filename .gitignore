@@ -1,0 +1,11 @@
+*.pyc
+.DS_Store
+membackup/Y*
+saved_networks/*
+!saved_networks/placeholder
+savedQnetwork/*
+!savedQnetwork/placeholder
+summary/*
+!summary/placeholder
+picDir/*
+!picDir/placeholder
