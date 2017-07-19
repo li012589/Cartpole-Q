@@ -20,6 +20,7 @@ It will take few hours to balance the pole.
 
 ## TO BE MORE SPECIFIC
 In the main:
-1. RENDER_ENV
+1. RENDER_ENV controls if render gym's output or not
+2. NN_PRESENT controls if save Q network's value(will take more time), then modify revealPic.py and run it to output pictures of these value and modify animation.py to out gif version.
 
 
