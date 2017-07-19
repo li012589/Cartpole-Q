@@ -2,7 +2,7 @@
 
 A naive Q-learning implement of Q-learning with memory replay and soft target network using tensorflow and gym.
 
-Here's some gif to show the process:
+Here's some gifs to show the process:
 
 ![alt text](https://github.com/li012589/Cartpole-Q/blob/master/demo/Qlearning.gif "Train process")
 ![alt text](https://github.com/li012589/Cartpole-Q/blob/master/demo/combine_theta0-compressed.gif "View the output of the Q network")
